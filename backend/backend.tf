@@ -3,7 +3,7 @@ provider "aws" {
 }
 
 resource "aws_s3_bucket" "tf_state" {
-  bucket = "my-terraform-workspace-states-env"
+  bucket = "my-terraform-workspace-states"
   force_destroy = true
 }
 

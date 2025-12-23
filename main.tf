@@ -1,6 +1,6 @@
 terraform {
   backend "s3" {
-    bucket         = "my-terraform-workspace-states-env"
+    bucket         = "my-terraform-workspace-states"
     key            = "global/terraform.tfstate"
     region         = "us-east-1"
     dynamodb_table = "terraform-locks"
