@@ -1,0 +1,160 @@
+pipeline {
+    agent {
+        label 'terraform'
+    }
+
+    environment {
+        TF_IN_AUTOMATION = "true"
+        AWS_DEFAULT_REGION = "us-east-1"
+
+        BACKEND_BUCKET = "my-terraform-workspace-states"
+        LOCK_TABLE     = "terraform-locks"
+    }
+
+    triggers {
+        githubPush()
+    }
+
+    options {
+        disableConcurrentBuilds()
+        timestamps()
+    }
+
+    stages {
+
+        stage('Checkout Code') {
+            steps {
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: '*/main']],
+                    userRemoteConfigs: [[
+                        url: 'git@github.com:Sanjay-Vishva/terraform-project-workspace.git',
+                        credentialsId: 'github-ssh'
+                    ]]
+                ])
+            }
+        }
+
+        stage('Check & Create Terraform Backend') {
+            steps {
+                sh '''
+                set -e
+
+                echo "Checking if S3 backend bucket exists..."
+                if aws s3api head-bucket --bucket "$BACKEND_BUCKET" 2>/dev/null; then
+                    echo "S3 bucket already exists. Skipping backend creation."
+                else
+                    echo "S3 bucket not found. Creating backend..."
+                    cd backend
+                    terraform init -input=false
+                    terraform apply -auto-approve
+                fi
+
+                echo "Backend check complete."
+                '''
+            }
+        }
+
+
+        stage('Terraform Init (Remote Backend)') {
+            steps {
+                sh '''
+                  terraform --version
+                  terraform init -reconfigure -input=false
+                '''
+            }
+        }
+
+        stage('Approve DEV Deployment') {
+            steps {
+                input message: 'Approve deployment to DEV environment?'
+            }
+        }
+
+        stage('Deploy DEV') {
+            steps {
+                sh '''
+                  terraform workspace select dev || terraform workspace new dev
+                  terraform apply -auto-approve -var-file=env/dev.tfvars
+                '''
+            }
+        }
+
+        stage('Approve STAGING Deployment') {
+            steps {
+                input message: 'Approve deployment to STAGING environment?'
+            }
+        }
+
+        stage('Deploy STAGING') {
+            steps {
+                sh '''
+                  terraform workspace select staging || terraform workspace new staging
+                  terraform apply -auto-approve -var-file=env/staging.tfvars
+                '''
+            }
+        }
+
+        stage('Approve PROD Deployment') {
+            steps {
+                input message: 'Approve deployment to PROD environment?'
+            }
+        }
+
+        stage('Deploy PROD') {
+            steps {
+                sh '''
+                  terraform workspace select prod || terraform workspace new prod
+                  terraform apply -auto-approve -var-file=env/prod.tfvars
+                '''
+            }
+        }
+
+        stage('FINAL APPROVAL – DESTROY ALL') {
+            steps {
+                input message: '⚠️ FINAL CONFIRMATION: Destroy DEV, STAGING, and PROD environments?'
+            }
+        }
+
+        stage('Destroy DEV') {
+            steps {
+                sh '''
+                  terraform workspace select dev
+                  terraform destroy -auto-approve -var-file=env/dev.tfvars
+                '''
+            }
+        }
+
+        stage('Destroy STAGING') {
+            steps {
+                sh '''
+                  terraform workspace select staging
+                  terraform destroy -auto-approve -var-file=env/staging.tfvars
+                '''
+            }
+        }
+
+        stage('Destroy PROD') {
+            steps {
+                sh '''
+                  terraform workspace select prod
+                  terraform destroy -auto-approve -var-file=env/prod.tfvars
+                '''
+            }
+        }
+    }
+
+    post {
+        always {
+            sh 'terraform workspace select default || true'
+        }
+
+        success {
+            echo '✅ Terraform pipeline completed successfully'
+        }
+
+        failure {
+            echo '❌ Terraform pipeline failed'
+        }
+    }
+}
